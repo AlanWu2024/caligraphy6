@@ -1,0 +1,7 @@
+{
+  "name": "行草通 (XingCaoTong)",
+  "description": "An AI-powered Chinese calligraphy recognition and learning platform. Scan cursive and running scripts to identify characters, learn stroke orders, and explore historical masterworks.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
