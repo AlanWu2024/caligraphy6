@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 /**
  * 识别图片中的书法字
- * 升级为 gemini-3-pro-preview 以获得最强的草书逻辑分析能力
+ * 采用最高规格的 gemini-3-pro-preview 模型
  */
 export const recognizeCalligraphy = async (base64Image: string) => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
@@ -13,7 +13,14 @@ export const recognizeCalligraphy = async (base64Image: string) => {
         {
           role: 'user',
           parts: [
-            { text: "你是一位世界级的古文字学家和书法鉴定专家。请分析这张中国书法图片（行书或草书）。\n\n要求：\n1. 识别图中的汉字。\n2. 启动 Google Search 联网功能，检查此图是否出自著名的历史碑帖（如《兰亭序》、《自叙帖》等）。\n3. 如果是名家作品，请指出具体的碑帖名称、书法家及朝代。\n4. 简述该字的构形演变。\n\n请严格按 JSON 格式返回结果。" },
+            { text: `你是一位顶级书法考据专家。请对这张图片中的书法字进行“数字考古”级别的识别：
+
+1. 视觉拆解：分析笔画的起承转合、连带关系（尤其是草书的省写逻辑）。
+2. 联网比对：立即使用 Google Search 访问《书法大字典》、故宫博物院 (dpm.org.cn)、台北故宫 (npm.gov.tw) 等专业数据库。
+3. 查找同款：寻找历史上哪位名家的笔法与此最接近，或者该字是否出自某部传世碑帖。
+4. 给出结论：返回识别结果。如果字迹模糊或极度潦草，请给出最可能的2-3个候选字。
+
+请以 JSON 格式返回结果。` },
             {
               inlineData: {
                 mimeType: "image/jpeg",
@@ -24,8 +31,8 @@ export const recognizeCalligraphy = async (base64Image: string) => {
         }
       ],
       config: {
-        thinkingConfig: { thinkingBudget: 16000 }, // 分配思考预算，让模型先推演笔画再给出结论
-        tools: [{ googleSearch: {} }], // 开启联网校验功能
+        thinkingConfig: { thinkingBudget: 32768 }, // 给予最高级别的逻辑推演空间
+        tools: [{ googleSearch: {} }], // 开启联网工具
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -35,14 +42,15 @@ export const recognizeCalligraphy = async (base64Image: string) => {
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  char: { type: Type.STRING, description: "识别出的汉字内容" },
-                  calligrapher: { type: Type.STRING, description: "书法家姓名，未知则填'民间书家'" },
-                  dynasty: { type: Type.STRING, description: "朝代" },
-                  etymology: { type: Type.STRING, description: "字源解析或笔法特点" },
-                  confidence: { type: Type.NUMBER, description: "0到1之间的置信度" },
-                  source: { type: Type.STRING, description: "出自哪本碑帖或文献" }
+                  char: { type: Type.STRING, description: "识别出的汉字" },
+                  calligrapher: { type: Type.STRING, description: "书法家或派系" },
+                  dynasty: { type: Type.STRING, description: "朝代背景" },
+                  etymology: { type: Type.STRING, description: "笔法解析：如'圆转处有魏碑遗意'" },
+                  confidence: { type: Type.NUMBER, description: "置信度 (0-1)" },
+                  source: { type: Type.STRING, description: "可能的碑帖出处" },
+                  reasoning: { type: Type.STRING, description: "AI 的识别逻辑推演过程" }
                 },
-                required: ["char", "calligrapher", "dynasty"]
+                required: ["char", "confidence", "reasoning"]
               }
             }
           }
@@ -50,35 +58,39 @@ export const recognizeCalligraphy = async (base64Image: string) => {
       }
     });
     
-    // 提取结果并合并搜索到的参考资料
     const rawText = response.text || "{}";
     const parsed = JSON.parse(rawText);
     
-    // 如果有联网搜索元数据，可以作为额外信息参考
+    // 关键步骤：提取联网搜索的原始依据链接
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    if (chunks.length > 0 && parsed.results?.length > 0) {
-      parsed.results[0].webReferences = chunks.map((c: any) => ({
-        title: c.web?.title,
-        uri: c.web?.uri
-      }));
+    if (parsed.results && parsed.results.length > 0) {
+      parsed.results[0].webReferences = chunks
+        .filter(c => c.web)
+        .map((c: any) => ({
+          title: c.web.title,
+          uri: c.web.uri
+        }));
     }
 
     return parsed;
   } catch (error) {
-    console.error("Recognition failed:", error);
+    console.error("Advanced recognition failed:", error);
     throw error;
   }
 };
 
 /**
- * 深度字典查询 - 联网搜索详细学术资料
+ * 联网深度查询字库
  */
 export const searchCalligraphyWeb = async (query: string) => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `请搜索中国书法中“${query}”字的学术解析。重点查询：1. 在故宫博物院、台北故宫、大都会博物馆中的藏品；2. 该字在《说文解字》中的本义；3. 行草书中典型的名家写法。请给出简洁的学术总结和参考链接。`,
+      contents: `检索中国书法中“${query}”字的所有典型写法。请查找并汇总：
+1. 王羲之、怀素、张旭、毛泽东等各代草书大家对此字的写法差异。
+2. 引用博物馆在线藏品的具体信息。
+3. 给出该字从隶书到狂草的形态演变总结。`,
       config: {
         tools: [{ googleSearch: {} }],
       },
@@ -87,13 +99,15 @@ export const searchCalligraphyWeb = async (query: string) => {
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     return {
       text: response.text || "",
-      sources: sources.map((chunk: any) => ({
-        title: chunk.web?.title || "学术资料参考",
-        uri: chunk.web?.uri || "#"
-      }))
+      sources: sources
+        .filter(c => c.web)
+        .map((chunk: any) => ({
+          title: chunk.web.title,
+          uri: chunk.web.uri
+        }))
     };
   } catch (error) {
-    console.error("Web search failed:", error);
-    return { text: "联网搜索暂时不可用", sources: [] };
+    console.error("Web retrieval failed:", error);
+    return { text: "由于网络限制，无法访问外部数据库。", sources: [] };
   }
 };
